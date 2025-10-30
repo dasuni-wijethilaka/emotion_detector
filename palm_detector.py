@@ -19,12 +19,15 @@ class FingerCounter:
         
     def count_fingers(self, hand_landmarks, handedness):
         """
-        Count the number of raised fingers
+        Count the number of raised fingers and identify which ones
+        Returns: (count, list of raised finger names)
         """
         if not hand_landmarks:
-            return 0
+            return 0, []
         
         fingers_up = []
+        finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+        raised_fingers = []
         
         # Get hand label (Left or Right)
         hand_label = handedness.classification[0].label
@@ -34,24 +37,27 @@ class FingerCounter:
             # For right hand: thumb is up if tip is to the right of pip
             if hand_landmarks.landmark[self.finger_tips[0]].x > hand_landmarks.landmark[self.finger_pips[0]].x:
                 fingers_up.append(1)
+                raised_fingers.append(finger_names[0])
             else:
                 fingers_up.append(0)
         else:
             # For left hand: thumb is up if tip is to the left of pip
             if hand_landmarks.landmark[self.finger_tips[0]].x < hand_landmarks.landmark[self.finger_pips[0]].x:
                 fingers_up.append(1)
+                raised_fingers.append(finger_names[0])
             else:
                 fingers_up.append(0)
         
         # Other four fingers - compare tip y-coordinate with pip y-coordinate
-        for tip_id, pip_id in zip(self.finger_tips[1:], self.finger_pips[1:]):
+        for i, (tip_id, pip_id) in enumerate(zip(self.finger_tips[1:], self.finger_pips[1:]), start=1):
             # If tip is above pip, finger is up (lower y value means higher position)
             if hand_landmarks.landmark[tip_id].y < hand_landmarks.landmark[pip_id].y:
                 fingers_up.append(1)
+                raised_fingers.append(finger_names[i])
             else:
                 fingers_up.append(0)
         
-        return sum(fingers_up)
+        return sum(fingers_up), raised_fingers
 
 def detect_palm():
     """
@@ -70,6 +76,7 @@ def detect_palm():
     
     start_time = time.time()
     finger_counts = []
+    finger_data = []  # Store (count, raised_fingers) tuples
     
     # Detection phase - 5 seconds
     while True:
@@ -103,12 +110,22 @@ def detect_palm():
                     frame, hand_landmarks, finger_counter.mp_hands.HAND_CONNECTIONS)
                 
                 # Count fingers
-                num_fingers = finger_counter.count_fingers(hand_landmarks, handedness)
+                num_fingers, raised_fingers = finger_counter.count_fingers(hand_landmarks, handedness)
                 finger_counts.append(num_fingers)
+                finger_data.append((num_fingers, raised_fingers))
                 
-                # Display finger count
+                # Display finger count and names
                 cv2.putText(frame, f"Fingers: {num_fingers}", (10, 70),
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+                
+                # Display which fingers are raised
+                if raised_fingers:
+                    fingers_text = ", ".join(raised_fingers)
+                    cv2.putText(frame, f"Raised: {fingers_text}", (10, 110),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+                else:
+                    cv2.putText(frame, "Raised: None (Fist)", (10, 110),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
         else:
             cv2.putText(frame, "No hand detected", (10, 70),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
@@ -124,13 +141,26 @@ def detect_palm():
         count_frequency = Counter(finger_counts)
         most_common_count = count_frequency.most_common(1)[0][0]
         
+        # Find the most common raised fingers combination for that count
+        matching_data = [data for data in finger_data if data[0] == most_common_count]
+        if matching_data:
+            # Get most common combination of raised fingers
+            finger_combinations = [tuple(data[1]) for data in matching_data]
+            combo_frequency = Counter(finger_combinations)
+            most_common_combo = combo_frequency.most_common(1)[0][0]
+            most_common_raised = list(most_common_combo)
+        else:
+            most_common_raised = []
+        
         print(f"\n{'='*50}")
         print(f"Detection complete!")
         print(f"Most common finger count: {most_common_count}")
+        print(f"Raised fingers: {', '.join(most_common_raised) if most_common_raised else 'None (Fist)'}")
         print(f"All counts detected: {dict(count_frequency)}")
         print(f"{'='*50}")
     else:
         most_common_count = None
+        most_common_raised = []
         print("No hand was detected during the scan")
     
     # Keep webcam open with final result
@@ -154,12 +184,23 @@ def detect_palm():
         if most_common_count is not None:
             cv2.putText(frame, f"FINAL COUNT: {most_common_count} fingers", 
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # Display which fingers were raised
+            if most_common_raised:
+                fingers_text = ", ".join(most_common_raised)
+                cv2.putText(frame, f"Raised: {fingers_text}", (10, 70),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, "Raised: None (Fist)", (10, 70),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            
+            cv2.putText(frame, "Press 'q' to exit", (10, 110),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         else:
             cv2.putText(frame, "No hand detected", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        
-        cv2.putText(frame, "Press 'q' to exit", (10, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, "Press 'q' to exit", (10, 70),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
         # Draw current hand landmarks if detected
         if results.multi_hand_landmarks:
@@ -176,14 +217,19 @@ def detect_palm():
     cap.release()
     cv2.destroyAllWindows()
     
-    return most_common_count
+    return most_common_count, most_common_raised
 
 if __name__ == "__main__":
     print("Palm Finger Detection System")
     print("="*50)
-    finger_count = detect_palm()
+    result = detect_palm()
     
-    if finger_count is not None:
+    if result[0] is not None:
+        finger_count, raised_fingers = result
         print(f"\nFinal Result: You raised {finger_count} finger(s)")
+        if raised_fingers:
+            print(f"Fingers raised: {', '.join(raised_fingers)}")
+        else:
+            print("Fingers raised: None (Fist)")
     else:
         print("\nCould not detect hand. Please try again.")
