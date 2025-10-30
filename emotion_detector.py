@@ -119,4 +119,4 @@ if __name__ == "__main__":
     if detected_emotion:
         print(f"\nFinal Result: Your emotion is '{detected_emotion}'")
     else:
-        print("\nCould not determine emotion. Please try again.")
+        print("\nCould not determine emotion. Please try again.")``
